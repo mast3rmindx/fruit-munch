@@ -261,7 +261,7 @@ class Enemy {
     this.px = this.tileC * TILE + TILE / 2;
     this.py = this.tileR * TILE + TILE / 2;
     this.dir = DIR.DOWN;
-    this.speed = 3.8;
+    this.speed = 2.8;
     this.frameIndex = 0;
     this.frameTimer = 0;
     this.state = 'NORMAL'; // NORMAL | FROZEN | WIPED
