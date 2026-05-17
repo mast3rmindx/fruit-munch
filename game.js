@@ -267,6 +267,7 @@ class Enemy {
     this.state = 'NORMAL'; // NORMAL | FROZEN | WIPED
     this.stateTimer = 0;
     this.moveCooldown = 0;
+    this.eatFlash = 0;
   }
 
   setState(s, duration) {
@@ -275,6 +276,7 @@ class Enemy {
   }
 
   update(dt, grid, player, scatter = false) {
+    if (this.eatFlash > 0) this.eatFlash -= dt;
     if (this.state === 'WIPED') {
       this.stateTimer -= dt;
       if (this.stateTimer <= 0) { this.reset(); }
@@ -326,6 +328,20 @@ class Enemy {
   }
 
   draw(ctx, images) {
+    // During the eat-flash window draw a scale-up + fade-out burst instead of the sprite
+    if (this.eatFlash > 0) {
+      const t = this.eatFlash / 0.35;         // 1→0
+      ctx.save();
+      ctx.globalAlpha = t;
+      ctx.translate(this.px, this.py);
+      ctx.scale(1 + (1 - t) * 1.5, 1 + (1 - t) * 1.5);
+      ctx.font = `bold ${Math.round(TILE * 0.9)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('😋', 0, 0);
+      ctx.restore();
+      return;
+    }
     if (this.state === 'WIPED') return;
     const prefix = this.type === 1 ? 'e1_' : 'e2_';
     const img = images[`${prefix}${this.frameIndex + 1}`];
@@ -355,6 +371,21 @@ class Enemy {
     const pc = Math.round((player.px - TILE/2) / TILE);
     return pr === this.tileR && pc === this.tileC;
   }
+
+  // Player is approaching from behind when they are moving in the same direction
+  // as the enemy (player caught up) and the enemy isn't stopped.
+  isApproachedFromBehind(player) {
+    if (player.dir === DIR.NONE || this.dir === DIR.NONE) return false;
+    return player.dir.x === this.dir.x && player.dir.y === this.dir.y;
+  }
+
+  eat() {
+    // Brief eaten flash, then respawn like a short wipe
+    this.eatFlash = 0.35; // seconds of flash animation
+    this.setState('WIPED', 5);
+  }
+
+  get isEating() { return this.eatFlash > 0; }
 }
 
 // ── Game ─────────────────────────────────────────────────────────────────────
@@ -435,6 +466,13 @@ class Game {
         this._togglePause();
       }
     });
+
+    // Pause button
+    const pauseEl = document.getElementById('btn-pause');
+    if (pauseEl) {
+      pauseEl.addEventListener('touchstart', e => { e.preventDefault(); this._togglePause(); }, {passive:false});
+      pauseEl.addEventListener('click', () => this._togglePause());
+    }
 
     // D-pad buttons
     const btnMap = {
@@ -523,6 +561,7 @@ class Game {
   _sfxPowerup() { this._playTone(660,  'sine',     0.3,  0.22); this._playTone(880, 'sine', 0.3, 0.18); }
   _sfxDeath()   { this._playTone(200,  'sawtooth', 0.6,  0.25); }
   _sfxClear()   { [523,659,784,1047].forEach((f,i) => setTimeout(() => this._playTone(f,'sine',0.25,0.2), i*120)); }
+  _sfxEat()     { this._playTone(880, 'sine', 0.07, 0.25); this._playTone(1100,'sine',0.12,0.22); }
 
   _addScore(pts, px, py, color) {
     const gained = pts * this.multiplier;
@@ -536,8 +575,8 @@ class Game {
   }
 
   _updateHUD() {
-    document.getElementById('hud-score').textContent = `Score: ${this.score}`;
-    document.getElementById('hud-high').textContent  = `Best: ${this.highScore}`;
+    document.getElementById('hud-score').textContent = `🍎 ${this.score}`;
+    document.getElementById('hud-high').textContent  = `🏆 ${this.highScore}`;
     document.getElementById('hud-level').textContent = `Lv ${this.level}`;
     const hearts = '❤️'.repeat(Math.max(0, this.player.lives));
     document.getElementById('hud-lives').textContent = hearts || '💀';
@@ -632,7 +671,17 @@ class Game {
     // Enemy collision
     if (!this.player.dead) {
       for (const e of this.enemies) {
-        if (e.collidesWithPlayer(this.player)) {
+        if (!e.collidesWithPlayer(this.player)) continue;
+
+        if (e.isApproachedFromBehind(this.player)) {
+          // Player sneaked up from behind — eat the enemy!
+          e.eat();
+          const pts = 200;
+          this._addScore(pts, this.player.px, this.player.py - TILE, '#ff66ff');
+          this.floatTexts.push(new FloatText('CRUNCH! 🍽️', this.player.px, this.player.py - TILE * 1.6, '#ff66ff'));
+          this._sfxEat();
+        } else {
+          // Head-on or side collision — player dies
           this.player.die();
           this.shake.timer = 0.35;
           this._sfxDeath();
@@ -641,8 +690,8 @@ class Game {
             this.state = 'GAMEOVER';
             this._updatePowerupBar();
           }
-          break;
         }
+        break;
       }
     }
 
@@ -884,16 +933,28 @@ class Game {
   canvas.width  = W;
   canvas.height = H;
 
-  // Scale canvas to fit screen while keeping aspect ratio
   function resize() {
-    const scaleX = (window.innerWidth  - 0) / W;
-    const scaleY = (window.innerHeight - 60) / H;
-    const scale  = Math.min(scaleX, scaleY, 1.4);
+    // Size canvas to fit the flex container (#canvas-area), not the whole window.
+    // The controls bar and HUD bar live outside canvas-area, so this naturally
+    // reserves the right amount of space without magic offsets.
+    const area = document.getElementById('canvas-area');
+    if (!area) return;
+    const { width: aw, height: ah } = area.getBoundingClientRect();
+    const scale = Math.min(aw / W, ah / H);
     canvas.style.width  = (W * scale) + 'px';
     canvas.style.height = (H * scale) + 'px';
+
+    // Keep D-pad buttons sized to the controls-bar height, clamped 44–72 px.
+    const bar = document.getElementById('controls-bar');
+    if (bar) {
+      const barH = bar.getBoundingClientRect().height;
+      const btn  = Math.max(44, Math.min(72, Math.floor((barH - 28) / 3)));
+      document.documentElement.style.setProperty('--btn', btn + 'px');
+    }
   }
-  resize();
-  window.addEventListener('resize', resize);
+
+  // First resize after layout, then on any window change
+  requestAnimationFrame(() => { resize(); window.addEventListener('resize', resize); });
 
   const images = await loadAssets();
   new Game(canvas, images);
