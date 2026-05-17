@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Fruit Munch</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a1a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+      touch-action: none;
+    }
+    #game-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+    }
+    #dpad {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: grid;
+      grid-template-columns: 52px 52px 52px;
+      grid-template-rows: 52px 52px 52px;
+      gap: 4px;
+      z-index: 10;
+    }
+    .dpad-btn {
+      background: rgba(255,255,255,0.15);
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      color: #fff;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      transition: background 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .dpad-btn:active, .dpad-btn.pressed {
+      background: rgba(255,255,255,0.35);
+    }
+    .dpad-empty { visibility: hidden; }
+    #score-hud {
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #fff;
+      font-size: 18px;
+      font-weight: bold;
+      text-shadow: 0 0 8px #ff0, 0 0 2px #000;
+      display: flex;
+      gap: 24px;
+      align-items: center;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #powerup-bar-wrapper {
+      position: fixed;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #powerup-label {
+      color: #ffe066;
+      font-size: 13px;
+      font-weight: bold;
+      text-shadow: 0 0 6px #ff0;
+      display: none;
+    }
+    #powerup-bar-outer {
+      width: 140px;
+      height: 10px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 6px;
+      overflow: hidden;
+      display: none;
+    }
+    #powerup-bar-inner {
+      height: 100%;
+      border-radius: 6px;
+      background: linear-gradient(90deg, #ff6b35, #ffe066);
+      transition: width 0.1s linear;
+    }
+  </style>
+</head>
+<body>
+  <div id="game-wrapper">
+    <canvas id="game"></canvas>
+  </div>
+
+  <div id="score-hud">
+    <span id="hud-score">Score: 0</span>
+    <span id="hud-high">Best: 0</span>
+    <span id="hud-level">Lv 1</span>
+    <span id="hud-lives">❤️❤️❤️</span>
+  </div>
+
+  <div id="powerup-bar-wrapper">
+    <div id="powerup-label"></div>
+    <div id="powerup-bar-outer"><div id="powerup-bar-inner"></div></div>
+  </div>
+
+  <div id="dpad">
+    <div class="dpad-empty"></div>
+    <div class="dpad-btn" id="btn-up">▲</div>
+    <div class="dpad-empty"></div>
+    <div class="dpad-btn" id="btn-left">◀</div>
+    <div class="dpad-empty"></div>
+    <div class="dpad-btn" id="btn-right">▶</div>
+    <div class="dpad-empty"></div>
+    <div class="dpad-btn" id="btn-down">▼</div>
+    <div class="dpad-empty"></div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
