@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <!-- viewport-fit=cover lets us use safe-area-inset-* for notch/home-indicator -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#0a0a1a">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -11,15 +10,55 @@
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
+    /* ── Design tokens — every size flows from these four variables ─────────
+       svh = "small viewport height": excludes mobile browser chrome, so it
+       never bounces when the URL bar hides/shows. Controls sizing is
+       expressed as a fraction of svh so small phones get small controls,
+       tablets get larger ones, desktop gets capped values.
+       ──────────────────────────────────────────────────────────────────── */
     :root {
+      /* Safe areas (iPhone notch / home bar) */
       --safe-t: env(safe-area-inset-top,    0px);
       --safe-b: env(safe-area-inset-bottom, 0px);
       --safe-l: env(safe-area-inset-left,   0px);
       --safe-r: env(safe-area-inset-right,  0px);
-      --btn: 60px;   /* D-pad button size — updated by JS on resize */
-      --gap: 6px;
+
+      /* Portrait phone defaults — each breakpoint overrides as needed */
+      --hud-h:  clamp(34px,  5.5svh, 52px);   /* HUD strip height          */
+      --ctrl-h: clamp(162px, 28svh,  245px);  /* controls bar height        */
+      --btn:    clamp(44px,  7.5svh, 72px);   /* D-pad button size          */
+      --gap:    5px;                           /* D-pad inter-button gap     */
     }
 
+    /* Tablet portrait (≥ 600 px wide) — bigger fingers, bigger controls */
+    @media (min-width: 600px) and (orientation: portrait) {
+      :root {
+        --hud-h:  clamp(44px,  5.5svh, 62px);
+        --ctrl-h: clamp(200px, 26svh,  290px);
+        --btn:    clamp(56px,  7svh,   84px);
+      }
+    }
+
+    /* Landscape phone (short screen) — controls become a right-hand column;
+       svw (small viewport width) drives the column width instead of svh.   */
+    @media (orientation: landscape) and (max-height: 480px) {
+      :root {
+        --hud-h:  clamp(48px,  7.5svw, 72px);
+        --ctrl-h: clamp(150px, 24svw,  220px);
+        --btn:    clamp(40px,  6.5svw, 66px);
+      }
+    }
+
+    /* Desktop / large tablet — cap at comfortable values */
+    @media (min-width: 1024px) {
+      :root {
+        --hud-h:  50px;
+        --ctrl-h: 232px;   /* 3 × 64 + 10 gap + 20 padding = 222 → fits */
+        --btn:    64px;
+      }
+    }
+
+    /* ── Base layout ──────────────────────────────────────────────────── */
     html, body {
       width: 100%; height: 100%;
       background: #0a0a1a;
@@ -29,36 +68,38 @@
       font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
     }
 
-    /* ── Shell: column in portrait, row in landscape ── */
     #shell {
       display: flex;
       flex-direction: column;
       width: 100%;
-      height: 100dvh;                         /* dynamic viewport height — avoids mobile toolbar bug */
+      height: 100dvh;   /* dvh tracks the dynamic viewport — avoids iOS toolbar clipping */
       padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);
     }
 
-    /* ── HUD strip ── */
+    /* ── HUD strip — declared height so canvas gets the right amount ── */
     #score-hud {
-      flex: 0 0 auto;
+      flex: 0 0 var(--hud-h);
       display: flex;
       justify-content: space-around;
       align-items: center;
-      padding: 5px 10px;
+      padding: 4px 10px;
+      gap: 6px;
       color: #fff;
-      font-size: clamp(11px, 3.5vw, 17px);
+      /* Font scales with HUD height so it never overflows the strip */
+      font-size: clamp(10px, calc(var(--hud-h) * 0.34), 18px);
       font-weight: bold;
       text-shadow: 0 0 8px #ff0, 0 0 2px #000;
       background: rgba(0,0,0,0.35);
-      pointer-events: none;
       white-space: nowrap;
-      gap: 8px;
+      overflow: hidden;
+      pointer-events: none;
     }
 
-    /* ── Canvas fills the middle ── */
+    /* ── Canvas area — takes whatever remains ─────────────────────────── */
     #canvas-area {
-      flex: 1 1 0;        /* shrink below natural size; critical pair with min-height:0 */
-      min-height: 0;
+      flex: 1 1 0;
+      min-height: 0;   /* allow flex child to shrink below its natural size */
+      min-width:  0;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -71,29 +112,30 @@
       touch-action: none;
     }
 
-    /* ── Controls bar below canvas ── */
+    /* ── Controls bar — declared height keeps canvas sizing accurate ── */
     #controls-bar {
-      flex: 0 0 auto;
+      flex: 0 0 var(--ctrl-h);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px 20px 12px;
+      padding: 10px 16px;
     }
 
-    /* Pause / mute button */
+    /* Pause button scales with HUD height for visual consistency */
     #btn-pause {
-      width: 52px; height: 52px;
+      width:  calc(var(--hud-h) * 1.2);
+      height: calc(var(--hud-h) * 1.2);
       background: rgba(255,255,255,0.1);
       border: 2px solid rgba(255,255,255,0.22);
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: 20px;
+      font-size: calc(var(--hud-h) * 0.46);
       color: rgba(255,255,255,0.75);
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
       flex-shrink: 0;
     }
-    #btn-pause:active { background: rgba(255,255,255,0.25); }
+    #btn-pause:active { background: rgba(255,255,255,0.28); }
 
     /* Power-up bar — centred between pause and d-pad */
     #powerup-bar-wrapper {
@@ -102,34 +144,34 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 4px;
-      padding: 0 14px;
+      gap: 5px;
+      padding: 0 12px;
       pointer-events: none;
     }
     #powerup-label {
       color: #ffe066;
-      font-size: clamp(10px, 3vw, 13px);
+      font-size: clamp(10px, calc(var(--btn) * 0.22), 14px);
       font-weight: bold;
       text-shadow: 0 0 6px #ff0;
       text-align: center;
       display: none;
     }
     #powerup-bar-outer {
-      width: 100%; max-width: 130px;
-      height: 9px;
+      width: 100%; max-width: calc(var(--btn) * 2.2);
+      height: clamp(7px, calc(var(--btn) * 0.13), 11px);
       background: rgba(255,255,255,0.15);
-      border-radius: 5px;
+      border-radius: 6px;
       overflow: hidden;
       display: none;
     }
     #powerup-bar-inner {
       height: 100%;
-      border-radius: 5px;
+      border-radius: 6px;
       background: linear-gradient(90deg, #ff6b35, #ffe066);
       transition: width 0.1s linear;
     }
 
-    /* D-pad */
+    /* ── D-pad ────────────────────────────────────────────────────────── */
     #dpad {
       display: grid;
       grid-template-columns: repeat(3, var(--btn));
@@ -141,9 +183,10 @@
     .dpad-btn {
       background: rgba(255,255,255,0.12);
       border: 2px solid rgba(255,255,255,0.26);
-      border-radius: 13px;
+      border-radius: calc(var(--btn) * 0.22);
       display: flex; align-items: center; justify-content: center;
-      font-size: clamp(18px, 5vw, 26px);
+      /* Arrow icon scales with the button */
+      font-size: calc(var(--btn) * 0.42);
       color: rgba(255,255,255,0.9);
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
@@ -155,34 +198,36 @@
     }
     .dpad-empty { visibility: hidden; }
 
-    /* ── Landscape: flip to row, controls on right ── */
+    /* ── Landscape phone — flip to row layout ─────────────────────────── */
     @media (orientation: landscape) and (max-height: 480px) {
       #shell { flex-direction: row; }
 
       #score-hud {
+        /* Becomes a left-hand sidebar; reuse --hud-h as the sidebar width */
+        flex: 0 0 var(--hud-h);
         flex-direction: column;
-        justify-content: center;
-        width: 64px; height: 100%;
-        padding: 8px 4px;
-        font-size: clamp(9px, 1.8vh, 13px);
-        gap: 12px;
-        writing-mode: vertical-lr;   /* rotate text so it reads top-to-bottom */
+        justify-content: space-around;
+        width: var(--hud-h); height: 100%;
+        padding: 10px 4px;
+        gap: 10px;
+        writing-mode: vertical-lr;
       }
-      /* undo vertical writing for emoji (they don't rotate well) */
+      /* Emoji don't rotate well — keep them horizontal */
       #score-hud span { writing-mode: horizontal-tb; text-align: center; }
 
       #canvas-area { flex: 1 1 0; min-width: 0; }
 
       #controls-bar {
+        /* Right-hand sidebar; reuse --ctrl-h as the sidebar width */
+        flex: 0 0 var(--ctrl-h);
         flex-direction: column;
         justify-content: center;
-        width: 210px; height: 100%;
+        width: var(--ctrl-h); height: 100%;
         padding: 12px 10px;
-        gap: 12px;
+        gap: 14px;
       }
-
       #powerup-bar-wrapper { flex: 0 0 auto; padding: 0; }
-      #powerup-bar-outer { max-width: 90px; }
+      #powerup-bar-outer   { max-width: calc(var(--btn) * 1.8); }
     }
   </style>
 </head>

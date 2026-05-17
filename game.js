@@ -261,13 +261,14 @@ class Enemy {
     this.px = this.tileC * TILE + TILE / 2;
     this.py = this.tileR * TILE + TILE / 2;
     this.dir = DIR.DOWN;
-    this.speed = 3.8;
+    this.speed = 2.8;
     this.frameIndex = 0;
     this.frameTimer = 0;
-    this.state = 'NORMAL'; // NORMAL | FROZEN | WIPED
+    this.state = 'NORMAL'; // NORMAL | FROZEN | WIPED | LOCKED
     this.stateTimer = 0;
     this.moveCooldown = 0;
     this.eatFlash = 0;
+    this.pendingLock = false;
   }
 
   setState(s, duration) {
@@ -279,13 +280,23 @@ class Enemy {
     if (this.eatFlash > 0) this.eatFlash -= dt;
     if (this.state === 'WIPED') {
       this.stateTimer -= dt;
-      if (this.stateTimer <= 0) { this.reset(); }
+      if (this.stateTimer <= 0) {
+        const lock = this.pendingLock;
+        this.pendingLock = false;
+        this.reset();
+        if (lock) { this.state = 'LOCKED'; this.stateTimer = 30; }
+      }
       return;
     }
     if (this.state === 'FROZEN') {
       this.stateTimer -= dt;
       if (this.stateTimer <= 0) this.state = 'NORMAL';
       return;
+    }
+    if (this.state === 'LOCKED') {
+      this.stateTimer -= dt;
+      if (this.stateTimer <= 0) this.state = 'NORMAL';
+      return; // immobile while locked
     }
 
     const targetX = this.tileC * TILE + TILE / 2;
@@ -345,12 +356,12 @@ class Enemy {
     if (this.state === 'WIPED') return;
     const prefix = this.type === 1 ? 'e1_' : 'e2_';
     const img = images[`${prefix}${this.frameIndex + 1}`];
-    const alpha = this.state === 'FROZEN' ? 0.55 : 1;
+    const isLocked = this.state === 'LOCKED';
+    const alpha = this.state === 'FROZEN' ? 0.55 : isLocked ? 0.6 : 1;
     ctx.save();
     ctx.globalAlpha = alpha;
-    if (this.state === 'FROZEN') {
-      ctx.filter = 'hue-rotate(180deg) saturate(1.5)';
-    }
+    if (this.state === 'FROZEN') ctx.filter = 'hue-rotate(180deg) saturate(1.5)';
+    if (isLocked) ctx.filter = 'grayscale(0.7) brightness(0.75)';
     if (!img) {
       ctx.fillStyle = this.type === 1 ? '#f66' : '#a66ff5';
       ctx.beginPath();
@@ -361,12 +372,31 @@ class Enemy {
       ctx.drawImage(img, this.px - s/2, this.py - s/2, s, s);
     }
     ctx.restore();
+
+    if (isLocked) {
+      // Lock icon centred on the sprite
+      ctx.save();
+      ctx.font = `${Math.round(TILE * 0.7)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.globalAlpha = 0.9;
+      ctx.fillText('🔒', this.px, this.py);
+      // Countdown seconds above the sprite
+      const secs = Math.ceil(this.stateTimer);
+      ctx.font = `bold ${Math.round(TILE * 0.38)}px Arial`;
+      ctx.fillStyle = '#fff';
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur = 4;
+      ctx.globalAlpha = 1;
+      ctx.fillText(secs, this.px, this.py - TILE * 0.82);
+      ctx.restore();
+    }
   }
 
   get tilePos() { return {r: this.tileR, c: this.tileC}; }
 
   collidesWithPlayer(player) {
-    if (this.state === 'WIPED') return false;
+    if (this.state === 'WIPED' || this.state === 'LOCKED') return false;
     const pr = Math.round((player.py - TILE/2) / TILE);
     const pc = Math.round((player.px - TILE/2) / TILE);
     return pr === this.tileR && pc === this.tileC;
@@ -380,9 +410,9 @@ class Enemy {
   }
 
   eat() {
-    // Brief eaten flash, then respawn like a short wipe
-    this.eatFlash = 0.35; // seconds of flash animation
-    this.setState('WIPED', 5);
+    this.eatFlash = 0.35;
+    this.pendingLock = true;       // after transit, enter LOCKED for 30 s
+    this.setState('WIPED', 1.5);  // brief invisible transit back to ghost house
   }
 
   get isEating() { return this.eatFlash > 0; }
@@ -934,26 +964,17 @@ class Game {
   canvas.height = H;
 
   function resize() {
-    // Size canvas to fit the flex container (#canvas-area), not the whole window.
-    // The controls bar and HUD bar live outside canvas-area, so this naturally
-    // reserves the right amount of space without magic offsets.
+    // CSS variables (--hud-h, --ctrl-h, --btn) already handle all UI scaling.
+    // JS only needs to fit the canvas inside #canvas-area.
     const area = document.getElementById('canvas-area');
     if (!area) return;
     const { width: aw, height: ah } = area.getBoundingClientRect();
+    if (aw <= 0 || ah <= 0) return;
     const scale = Math.min(aw / W, ah / H);
-    canvas.style.width  = (W * scale) + 'px';
-    canvas.style.height = (H * scale) + 'px';
-
-    // Keep D-pad buttons sized to the controls-bar height, clamped 44–72 px.
-    const bar = document.getElementById('controls-bar');
-    if (bar) {
-      const barH = bar.getBoundingClientRect().height;
-      const btn  = Math.max(44, Math.min(72, Math.floor((barH - 28) / 3)));
-      document.documentElement.style.setProperty('--btn', btn + 'px');
-    }
+    canvas.style.width  = Math.round(W * scale) + 'px';
+    canvas.style.height = Math.round(H * scale) + 'px';
   }
 
-  // First resize after layout, then on any window change
   requestAnimationFrame(() => { resize(); window.addEventListener('resize', resize); });
 
   const images = await loadAssets();
