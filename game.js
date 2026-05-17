@@ -436,6 +436,13 @@ class Game {
       }
     });
 
+    // Pause button
+    const pauseEl = document.getElementById('btn-pause');
+    if (pauseEl) {
+      pauseEl.addEventListener('touchstart', e => { e.preventDefault(); this._togglePause(); }, {passive:false});
+      pauseEl.addEventListener('click', () => this._togglePause());
+    }
+
     // D-pad buttons
     const btnMap = {
       'btn-up': DIR.UP, 'btn-down': DIR.DOWN,
@@ -536,8 +543,8 @@ class Game {
   }
 
   _updateHUD() {
-    document.getElementById('hud-score').textContent = `Score: ${this.score}`;
-    document.getElementById('hud-high').textContent  = `Best: ${this.highScore}`;
+    document.getElementById('hud-score').textContent = `🍎 ${this.score}`;
+    document.getElementById('hud-high').textContent  = `🏆 ${this.highScore}`;
     document.getElementById('hud-level').textContent = `Lv ${this.level}`;
     const hearts = '❤️'.repeat(Math.max(0, this.player.lives));
     document.getElementById('hud-lives').textContent = hearts || '💀';
@@ -884,16 +891,28 @@ class Game {
   canvas.width  = W;
   canvas.height = H;
 
-  // Scale canvas to fit screen while keeping aspect ratio
   function resize() {
-    const scaleX = (window.innerWidth  - 0) / W;
-    const scaleY = (window.innerHeight - 60) / H;
-    const scale  = Math.min(scaleX, scaleY, 1.4);
+    // Size canvas to fit the flex container (#canvas-area), not the whole window.
+    // The controls bar and HUD bar live outside canvas-area, so this naturally
+    // reserves the right amount of space without magic offsets.
+    const area = document.getElementById('canvas-area');
+    if (!area) return;
+    const { width: aw, height: ah } = area.getBoundingClientRect();
+    const scale = Math.min(aw / W, ah / H);
     canvas.style.width  = (W * scale) + 'px';
     canvas.style.height = (H * scale) + 'px';
+
+    // Keep D-pad buttons sized to the controls-bar height, clamped 44–72 px.
+    const bar = document.getElementById('controls-bar');
+    if (bar) {
+      const barH = bar.getBoundingClientRect().height;
+      const btn  = Math.max(44, Math.min(72, Math.floor((barH - 28) / 3)));
+      document.documentElement.style.setProperty('--btn', btn + 'px');
+    }
   }
-  resize();
-  window.addEventListener('resize', resize);
+
+  // First resize after layout, then on any window change
+  requestAnimationFrame(() => { resize(); window.addEventListener('resize', resize); });
 
   const images = await loadAssets();
   new Game(canvas, images);
