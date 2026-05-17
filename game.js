@@ -42,6 +42,15 @@ const MAZE_TEMPLATE = [
 const POWERUP_NAMES = ['', 'x2 Points!', 'Freeze!', 'Enemy Wipe!', 'x5 Points!'];
 const POWERUP_COLORS= ['', '#ffe066',   '#66eeff',  '#ff66aa',     '#ff9933'];
 
+// Map each POWERUP tile (row,col) → power-up index 1-4, assigned in reading order
+const POWERUP_TILE_MAP = (() => {
+  const m = {}; let i = 0;
+  for (let r = 0; r < MAZE_TEMPLATE.length; r++)
+    for (let c = 0; c < MAZE_TEMPLATE[r].length; c++)
+      if (MAZE_TEMPLATE[r][c] === T.POWERUP) m[`${r},${c}`] = (i++ % 4) + 1;
+  return m;
+})();
+
 // ── Asset Loader ─────────────────────────────────────────────────────────────
 async function loadAssets() {
   const images = {};
@@ -265,7 +274,7 @@ class Enemy {
     this.stateTimer = duration;
   }
 
-  update(dt, grid, player) {
+  update(dt, grid, player, scatter = false) {
     if (this.state === 'WIPED') {
       this.stateTimer -= dt;
       if (this.stateTimer <= 0) { this.reset(); }
@@ -285,14 +294,20 @@ class Enemy {
 
     if (dist < step + 1) {
       this.px = targetX; this.py = targetY;
-      // choose next direction via BFS
-      let target = {r: player.tileR, c: player.tileC};
-      if (this.type === 2) {
-        // predict ahead
+      // During grace period enemies scatter (move away from player)
+      let target;
+      if (scatter) {
+        target = {
+          r: Math.max(0, Math.min(ROWS-1, 2 * this.tileR - player.tileR)),
+          c: Math.max(0, Math.min(COLS-1, 2 * this.tileC - player.tileC)),
+        };
+      } else if (this.type === 2) {
         target = {
           r: Math.max(0, Math.min(ROWS-1, player.tileR + player.dir.y * 4)),
           c: Math.max(0, Math.min(COLS-1, player.tileC + player.dir.x * 4)),
         };
+      } else {
+        target = {r: player.tileR, c: player.tileC};
       }
       const d = bfsDir(grid, {r: this.tileR, c: this.tileC}, target);
       if (d !== DIR.NONE) {
@@ -348,8 +363,9 @@ class Game {
     this.canvas = canvas;
     this.ctx    = canvas.getContext('2d');
     this.images = images;
-    this.state  = 'MENU'; // MENU | PLAYING | PAUSED | GAMEOVER
+    this.state  = 'MENU'; // MENU | PLAYING | PAUSED | LEVELCLEAR | GAMEOVER
     this.score  = 0;
+    this.level  = 1;
     this.highScore = parseInt(localStorage.getItem('fruitMunchHigh') || '0');
     this.multiplier = 1;
     this.multiplierTimer = 0;
@@ -357,6 +373,7 @@ class Game {
     this.activePowerupIdx = 0;
     this.floatTexts = [];
     this.shake = {x:0, y:0, timer:0};
+    this.gracePeriod = 0; // seconds enemies wander before chasing
     this.stars = Array.from({length: 60}, () => ({
       x: Math.random() * COLS * TILE,
       y: Math.random() * ROWS * TILE,
@@ -403,9 +420,10 @@ class Game {
 
   _bindInput() {
     const setDir = (d) => {
-      if (this.state === 'PLAYING') this.player.setDir(d);
+      if (this.state === 'PLAYING')                                 this.player.setDir(d);
       else if (this.state === 'MENU' || this.state === 'GAMEOVER') this._startGame();
-      else if (this.state === 'PAUSED') this._togglePause();
+      else if (this.state === 'PAUSED')                            this._togglePause();
+      // LEVELCLEAR: ignore input until transition completes
     };
 
     document.addEventListener('keydown', e => {
@@ -414,7 +432,7 @@ class Game {
       else if (e.key === 'ArrowUp'   || e.key === 'w' || e.key === 'W') { e.preventDefault(); setDir(DIR.UP); }
       else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { e.preventDefault(); setDir(DIR.DOWN); }
       else if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
-        if (this.state === 'PLAYING' || this.state === 'PAUSED') this._togglePause();
+        this._togglePause();
       }
     });
 
@@ -439,10 +457,10 @@ class Game {
       touchStartY = e.touches[0].clientY;
     }, {passive:true});
     this.canvas.addEventListener('touchend', e => {
+      if (this.state === 'LEVELCLEAR') return;
       const dx = e.changedTouches[0].clientX - touchStartX;
       const dy = e.changedTouches[0].clientY - touchStartY;
       if (Math.abs(dx) < 30 && Math.abs(dy) < 30) {
-        // tap = start/resume
         if (this.state === 'MENU' || this.state === 'GAMEOVER') this._startGame();
         else if (this.state === 'PAUSED') this._togglePause();
         return;
@@ -453,6 +471,7 @@ class Game {
 
     // Canvas click = start/pause
     this.canvas.addEventListener('click', () => {
+      if (this.state === 'LEVELCLEAR') return;
       if (this.state === 'MENU' || this.state === 'GAMEOVER') this._startGame();
       else if (this.state === 'PAUSED') this._togglePause();
     });
@@ -462,18 +481,48 @@ class Game {
     this._initMaze();
     this._initEntities();
     this.score = 0;
+    this.level = 1;
     this.multiplier = 1;
     this.multiplierTimer = 0;
     this.activePowerupIdx = 0;
     this.floatTexts = [];
+    this.gracePeriod = 3;
     this.state = 'PLAYING';
     this._updateHUD();
     this._updatePowerupBar();
+    this._initAudio();
   }
 
   _togglePause() {
+    if (this.state === 'LEVELCLEAR') return;
     this.state = this.state === 'PAUSED' ? 'PLAYING' : 'PAUSED';
   }
+
+  _initAudio() {
+    try {
+      if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch(_) {}
+  }
+
+  _playTone(freq, type, duration, gainVal = 0.18) {
+    try {
+      const ac = this.audioCtx;
+      if (!ac) return;
+      const osc  = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.connect(gain); gain.connect(ac.destination);
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, ac.currentTime);
+      gain.gain.setValueAtTime(gainVal, ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + duration);
+      osc.start(); osc.stop(ac.currentTime + duration);
+    } catch(_) {}
+  }
+
+  _sfxChomp()   { this._playTone(440,  'square',   0.08, 0.12); }
+  _sfxPowerup() { this._playTone(660,  'sine',     0.3,  0.22); this._playTone(880, 'sine', 0.3, 0.18); }
+  _sfxDeath()   { this._playTone(200,  'sawtooth', 0.6,  0.25); }
+  _sfxClear()   { [523,659,784,1047].forEach((f,i) => setTimeout(() => this._playTone(f,'sine',0.25,0.2), i*120)); }
 
   _addScore(pts, px, py, color) {
     const gained = pts * this.multiplier;
@@ -489,6 +538,7 @@ class Game {
   _updateHUD() {
     document.getElementById('hud-score').textContent = `Score: ${this.score}`;
     document.getElementById('hud-high').textContent  = `Best: ${this.highScore}`;
+    document.getElementById('hud-level').textContent = `Lv ${this.level}`;
     const hearts = '❤️'.repeat(Math.max(0, this.player.lives));
     document.getElementById('hud-lives').textContent = hearts || '💀';
   }
@@ -540,6 +590,7 @@ class Game {
 
   _update(dt) {
     if (this.state !== 'PLAYING') return;
+    if (this.gracePeriod > 0) this.gracePeriod -= dt;
 
     // Shake
     if (this.shake.timer > 0) {
@@ -561,7 +612,7 @@ class Game {
 
     this.player.update(dt, this.grid);
 
-    for (const e of this.enemies) e.update(dt, this.grid, this.player);
+    for (const e of this.enemies) e.update(dt, this.grid, this.player, this.gracePeriod > 0);
 
     // Fruit/powerup pickup
     const {r, c} = this.player.tilePos;
@@ -570,12 +621,12 @@ class Game {
       this.grid[r][c] = T.PATH;
       this.fruitsLeft--;
       this._addScore(10, this.player.px, this.player.py - TILE/2, '#ffe066');
+      this._sfxChomp();
     } else if (cell === T.POWERUP) {
-      // identify which powerup by position (cycle through 4 types based on location)
-      // Map tile position to powerup index 1-4 deterministically
-      const puIdx = ((r + c) % 4) + 1;
+      const puIdx = POWERUP_TILE_MAP[`${r},${c}`] ?? 1;
       this.grid[r][c] = T.PATH;
       this._applyPowerup(puIdx, this.player.px, this.player.py - TILE/2);
+      this._sfxPowerup();
     }
 
     // Enemy collision
@@ -584,6 +635,7 @@ class Game {
         if (e.collidesWithPlayer(this.player)) {
           this.player.die();
           this.shake.timer = 0.35;
+          this._sfxDeath();
           this._updateHUD();
           if (this.player.lives <= 0) {
             this.state = 'GAMEOVER';
@@ -597,9 +649,10 @@ class Game {
     // Level complete
     if (this.fruitsLeft === 0) {
       this._addScore(500, this.canvas.width/2, this.canvas.height/2, '#00ff88');
-      this.floatTexts.push(new FloatText('LEVEL CLEAR! +500', this.canvas.width/2, this.canvas.height/2 - 40, '#00ff88'));
-      setTimeout(() => { if (this.state === 'PLAYING') this._nextLevel(); }, 2000);
-      this.state = 'PAUSED'; // brief pause
+      this.floatTexts.push(new FloatText(`LEVEL ${this.level} CLEAR! +500`, this.canvas.width/2, this.canvas.height/2 - 40, '#00ff88'));
+      this._sfxClear();
+      setTimeout(() => { if (this.state === 'LEVELCLEAR') this._nextLevel(); }, 2200);
+      this.state = 'LEVELCLEAR';
     }
 
     // Float texts
@@ -609,10 +662,11 @@ class Game {
 
   _nextLevel() {
     this._initMaze();
-    // Keep player lives and score
     const lives = this.player.lives;
+    this.level++;
     this._initEntities();
     this.player.lives = lives;
+    this.gracePeriod = 2;
     this.state = 'PLAYING';
     this._updateHUD();
   }
@@ -630,9 +684,10 @@ class Game {
     this.player.draw(ctx, this.images, this.shake);
     for (const ft of this.floatTexts) ft.draw(ctx);
 
-    if (this.state === 'MENU')     this._drawMenu(ctx, W_PX, H_PX);
-    if (this.state === 'PAUSED')   this._drawPaused(ctx, W_PX, H_PX);
-    if (this.state === 'GAMEOVER') this._drawGameOver(ctx, W_PX, H_PX);
+    if (this.state === 'MENU')       this._drawMenu(ctx, W_PX, H_PX);
+    if (this.state === 'PAUSED')     this._drawPaused(ctx, W_PX, H_PX);
+    if (this.state === 'GAMEOVER')   this._drawGameOver(ctx, W_PX, H_PX);
+    if (this.state === 'LEVELCLEAR') this._drawLevelClear(ctx, W_PX, H_PX);
   }
 
   _drawBackground(ctx, W, H) {
@@ -688,7 +743,7 @@ class Game {
             ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.fill();
           }
         } else if (cell === T.POWERUP) {
-          const puIdx = ((r + c) % 4) + 1;
+          const puIdx = POWERUP_TILE_MAP[`${r},${c}`] ?? 1;
           const img = this.images[`pu${puIdx}`];
           const bob = Math.sin(now * 3 + r + c) * 3;
           const s = TILE * 0.85;
@@ -749,7 +804,6 @@ class Game {
   }
 
   _drawPaused(ctx, W, H) {
-    if (this.fruitsLeft === 0) return; // level-clear uses this state briefly; overlay drawn by GAMEOVER check
     this._drawOverlay(ctx, W, H);
     ctx.save();
     ctx.textAlign = 'center';
@@ -762,6 +816,21 @@ class Game {
     ctx.fillStyle = '#aaa';
     ctx.shadowBlur = 0;
     ctx.fillText('Tap or press P to resume', W/2, H/2 + 40);
+    ctx.restore();
+  }
+
+  _drawLevelClear(ctx, W, H) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    const now = performance.now() / 1000;
+    const scale = 1 + 0.06 * Math.sin(now * 6);
+    ctx.translate(W/2, H/2 - 50);
+    ctx.scale(scale, scale);
+    ctx.font = 'bold 34px Arial';
+    ctx.fillStyle = '#00ff88';
+    ctx.shadowColor = '#00ff88';
+    ctx.shadowBlur = 20;
+    ctx.fillText(`LEVEL ${this.level} CLEAR!`, 0, 0);
     ctx.restore();
   }
 
