@@ -156,28 +156,28 @@ class FloatText {
 class Player {
   constructor(startR, startC) {
     this.startR = startR; this.startC = startC;
-    this.reset();
+    this.reset(true);
   }
-  reset() {
+  reset(fullReset = false) {
     this.tileR = this.startR; this.tileC = this.startC;
     this.px = this.tileC * TILE + TILE / 2;
     this.py = this.tileR * TILE + TILE / 2;
     this.dir = DIR.NONE;
     this.nextDir = DIR.NONE;
-    this.speed = 5; // tiles/sec
+    this.speed = 5;
     this.moving = false;
     this.frameIndex = 0;
     this.frameTimer = 0;
-    this.lives = 3;
     this.dead = false;
     this.deathTimer = 0;
+    if (fullReset) this.lives = 3;
   }
   setDir(d) { this.nextDir = d; }
 
   update(dt, grid) {
     if (this.dead) {
       this.deathTimer -= dt;
-      if (this.deathTimer <= 0) { this.dead = false; this.reset(); this.lives = Math.max(0, this.lives); }
+      if (this.deathTimer <= 0) this.reset(); // keeps current lives
       return;
     }
 
